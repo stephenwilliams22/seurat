@@ -9,7 +9,7 @@ NULL
 
 #' @param fov Name to store FOV as
 #' @param assay Name to store expression matrix as
-#' @inheritDotParams ReadAkoya
+#' @param ... Ignored
 #'
 #' @return \code{LoadAkoya}: A \code{\link[SeuratObject]{Seurat}} object
 #'
@@ -172,41 +172,110 @@ LoadVizgen <- function(data.dir, fov, assay = 'Vizgen', z = 3L) {
 
 #' @return \code{LoadXenium}: A \code{\link[SeuratObject]{Seurat}} object
 #'
-#' @param data.dir Path to folder containing Nanostring SMI outputs
+#' @param data.dir Path to folder containing Xenium outputs
 #' @param fov FOV name
 #' @param assay Assay name
+#' @param mols.qv.threshold Remove transcript molecules with
+#' a QV less than this threshold. QV >= 20 is the standard threshold
+#' used to construct the cell x gene count matrix.
+#' @param cell.centroids Whether or not to load cell centroids
+#' @param molecule.coordinates Whether or not to load molecule pixel coordinates
+#' @param segmentations One of "cell", "nucleus" or NULL (to load either cell
+#' segmentations, nucleus segmentations or neither)
+#' @param flip.xy Whether or not to flip the x/y coordinates of the Xenium outputs
+#' to match what is displayed in Xenium Explorer, or fit on your screen better.
 #'
 #' @importFrom SeuratObject Cells CreateCentroids CreateFOV
-#' CreateSegmentation CreateSeuratObject
+#' CreateSegmentation CreateSeuratObject CreateMolecules
 #'
 #' @export
 #'
 #' @rdname ReadXenium
 #'
-LoadXenium <- function(data.dir, fov = 'fov', assay = 'Xenium') {
+LoadXenium <- function(
+  data.dir,
+  fov = 'fov',
+  assay = 'Xenium',
+  mols.qv.threshold = 20,
+  cell.centroids = TRUE,
+  molecule.coordinates = TRUE,
+  segmentations = NULL,
+  flip.xy = FALSE
+) {
+  if(!is.null(segmentations) && !(segmentations %in% c('nucleus', 'cell'))) {
+    stop('segmentations must be NULL or one of "nucleus", "cell"')
+  }
+
+  if(!cell.centroids && is.null(segmentations)) {
+    stop(
+      "Must load either centroids or cell/nucleus segmentations"
+    )
+  }
+
   data <- ReadXenium(
     data.dir = data.dir,
-    type = c("centroids", "segmentations"),
+    type = c("centroids", "segmentations", "nucleus_segmentations")[
+      c(cell.centroids, isTRUE(segmentations == 'cell'), isTRUE(segmentations == 'nucleus'))
+    ],
+    outs = c("segmentation_method", "matrix", "microns")[
+      c(cell.centroids || isTRUE(segmentations != 'nucleus'), TRUE, molecule.coordinates && (cell.centroids || !is.null(segmentations)))
+    ],
+    mols.qv.threshold = mols.qv.threshold,
+    flip.xy = flip.xy
   )
 
-  segmentations.data <- list(
-    "centroids" = CreateCentroids(data$centroids),
-    "segmentation" = CreateSegmentation(data$segmentations)
-  )
-  coords <- CreateFOV(
-    coords = segmentations.data,
-    type = c("segmentation", "centroids"),
-    molecules = data$microns,
-    assay = assay
+  segmentations <- intersect(c("segmentations", "nucleus_segmentations"), names(data))
+
+  segmentations.data <- Filter(Negate(is.null), list(
+    centroids = if(is.null(data$centroids)) {
+      NULL
+    } else {
+      CreateCentroids(data$centroids)
+    },
+    segmentations = if(length(segmentations) > 0) {
+      CreateSegmentation(
+        data[[segmentations]]
+      )
+    } else {
+      NULL
+    }
+  ))
+
+  coords <- if(length(segmentations.data) > 0) {
+    CreateFOV(
+      segmentations.data,
+      assay = assay,
+      molecules = if(is.null(data$microns)) {
+        NULL
+      } else {
+        CreateMolecules(data$microns)
+      }
+    )
+  } else {
+    NULL
+  }
+
+  slot.map <- c(
+    `Blank Codeword` = 'BlankCodeword',
+    `Unassigned Codeword` = 'BlankCodeword',
+    `Negative Control Codeword` = 'ControlCodeword',
+    `Negative Control Probe` = 'ControlProbe',
+    `Genomic Control` = 'GenomicControl'
   )
 
   xenium.obj <- CreateSeuratObject(counts = data$matrix[["Gene Expression"]], assay = assay)
-  if("Blank Codeword" %in% names(data$matrix))
-    xenium.obj[["BlankCodeword"]] <- CreateAssayObject(counts = data$matrix[["Blank Codeword"]])
-  else
-    xenium.obj[["BlankCodeword"]] <- CreateAssayObject(counts = data$matrix[["Unassigned Codeword"]])
-  xenium.obj[["ControlCodeword"]] <- CreateAssayObject(counts = data$matrix[["Negative Control Codeword"]])
-  xenium.obj[["ControlProbe"]] <- CreateAssayObject(counts = data$matrix[["Negative Control Probe"]])
+
+  if(!is.null(data$metadata)) {
+    Misc(xenium.obj, 'run_metadata') <- data$metadata
+  }
+
+  if(!is.null(data$segmentation_method)) {
+    xenium.obj <- AddMetaData(xenium.obj, data$segmentation_method)
+  }
+
+  for(name in intersect(names(slot.map), names(data$matrix))) {
+    xenium.obj[[slot.map[name]]] <- CreateAssayObject(counts = data$matrix[[name]])
+  }
 
   xenium.obj[[fov]] <- coords
   return(xenium.obj)
@@ -258,7 +327,9 @@ SpatialDimPlot <- function(
   pt.size.factor = 1.6,
   alpha = c(1, 1),
   image.alpha = 1,
-  stroke = 0.25,
+  image.scale = "lowres",
+  shape = 21,
+  stroke = NA,
   label.box = TRUE,
   interactive = FALSE,
   information = NULL
@@ -281,6 +352,8 @@ SpatialDimPlot <- function(
     pt.size.factor = pt.size.factor,
     alpha = alpha,
     image.alpha = image.alpha,
+    image.scale = image.scale,
+    shape = shape,
     stroke = stroke,
     label.box = label.box,
     interactive = interactive,
@@ -307,7 +380,9 @@ SpatialFeaturePlot <- function(
   pt.size.factor = 1.6,
   alpha = c(1, 1),
   image.alpha = 1,
-  stroke = 0.25,
+  image.scale = "lowres",
+  shape = 21,
+  stroke = NA,
   interactive = FALSE,
   information = NULL
 ) {
@@ -325,6 +400,8 @@ SpatialFeaturePlot <- function(
     pt.size.factor = pt.size.factor,
     alpha = alpha,
     image.alpha = image.alpha,
+    image.scale = image.scale,
+    shape = shape,
     stroke = stroke,
     interactive = interactive,
     information = information
@@ -391,7 +468,8 @@ SpecificDimPlot <- function(object, ...) {
 #' @export
 #'
 ReadParseBio <- function(data.dir, ...) {
-  mtx <- file.path(data.dir, "DGE.mtx")
+  file.dir <- list.files(path = data.dir, pattern = ".mtx")
+  mtx <- file.path(data.dir, file.dir)
   cells <- file.path(data.dir, "cell_metadata.csv")
   features <- file.path(data.dir, "all_genes.csv")
   return(ReadMtx(

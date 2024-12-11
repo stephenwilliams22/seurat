@@ -9,10 +9,10 @@ FindAllMarkers(
   object,
   assay = NULL,
   features = NULL,
-  logfc.threshold = 0.25,
+  logfc.threshold = 0.1,
   test.use = "wilcox",
   slot = "data",
-  min.pct = 0.1,
+  min.pct = 0.01,
   min.diff.pct = -Inf,
   node = NULL,
   verbose = TRUE,
@@ -38,13 +38,18 @@ FindAllMarkers(
 \item{features}{Genes to test. Default is to use all genes}
 
 \item{logfc.threshold}{Limit testing to genes which show, on average, at least
-X-fold difference (log-scale) between the two groups of cells. Default is 0.25
-Increasing logfc.threshold speeds up the function, but can miss weaker signals.}
+X-fold difference (log-scale) between the two groups of cells. Default is 0.1
+Increasing logfc.threshold speeds up the function, but can miss weaker signals.
+If the \code{slot} parameter is "scale.data" no filtering is performed.}
 
 \item{test.use}{Denotes which test to use. Available options are:
 \itemize{
  \item{"wilcox"} : Identifies differentially expressed genes between two
- groups of cells using a Wilcoxon Rank Sum test (default)
+ groups of cells using a Wilcoxon Rank Sum test (default); will use a fast
+ implementation by Presto if installed
+ \item{"wilcox_limma"} : Identifies differentially expressed genes between two
+ groups of cells using the limma implementation of the Wilcoxon Rank Sum test;
+ set this option to reproduce results from Seurat v4
  \item{"bimod"} : Likelihood-ratio test for single cell gene expression,
  (McDavid et al., Bioinformatics, 2013)
  \item{"roc"} : Identifies 'markers' of gene expression using ROC analysis.
@@ -82,12 +87,12 @@ Increasing logfc.threshold speeds up the function, but can miss weaker signals.}
  https://bioconductor.org/packages/release/bioc/html/DESeq2.html
 }}
 
-\item{slot}{Slot to pull data from; note that if \code{test.use} is "negbinom", "poisson", or "DESeq2",
-\code{slot} will be set to "counts"}
+\item{slot}{Slot to pull data from; note that if \code{test.use} is
+"negbinom", "poisson", or "DESeq2", \code{slot} will be set to "counts"}
 
 \item{min.pct}{only test genes that are detected in a minimum fraction of
 min.pct cells in either of the two populations. Meant to speed up the function
-by not testing genes that are very infrequently expressed. Default is 0.1}
+by not testing genes that are very infrequently expressed. Default is 0.01}
 
 \item{min.diff.pct}{only test genes that show a minimum difference in the
 fraction of detection between the two groups. Set to -Inf by default}
@@ -113,7 +118,14 @@ of the two groups, currently only used for poisson and negative binomial tests}
 \item{min.cells.group}{Minimum number of cells in one of the groups}
 
 \item{mean.fxn}{Function to use for fold change or average difference calculation.
-If NULL, the appropriate function will be chose according to the slot used}
+The default depends on the the value of \code{fc.slot}:
+\itemize{
+ \item{"counts"} : difference in the log of the mean counts, with pseudocount.
+ \item{"data"} : difference in the log of the average exponentiated data, with pseudocount.
+ This adjusts for differences in sequencing depth between cells, and assumes that "data"
+ has been log-normalized.
+ \item{"scale.data"} : difference in the means of scale.data.
+}}
 
 \item{fc.name}{Name of the fold change, average difference, or custom function column
 in the output data.frame. If NULL, the fold change column will be named
@@ -124,7 +136,8 @@ slot "avg_diff".}
 
 \item{return.thresh}{Only return markers that have a p-value < return.thresh, or a power > return.thresh (if the test is ROC)}
 
-\item{densify}{Convert the sparse matrix to a dense form before running the DE test. This can provide speedups but might require higher memory; default is FALSE}
+\item{densify}{Convert the sparse matrix to a dense form before running the 
+DE test. This can provide speedups but might require higher memory; default is FALSE}
 
 \item{...}{Arguments passed to other methods and to specific DE methods}
 }

@@ -127,6 +127,9 @@ CalcPerturbSig <- function(
 #' @param balanced Option to display pathway enrichments for both negative and
 #' positive DE genes.If false, only positive DE gene will be displayed.
 #' @param max.genes Maximum number of genes to use as input to enrichR.
+#' @param logfc.threshold Limit testing to genes which show, on average, at least
+#' X-fold difference (log-scale) between the two groups of cells. Default is 0.25. 
+#' Increasing logfc.threshold speeds up the function, but can miss weaker signals.
 #' @param p.val.cutoff Cutoff to select DE genes.
 #' @param cols A list of colors to use for barplots.
 #' @param enrich.database Database to use from enrichR.
@@ -209,8 +212,9 @@ DEenrichRPlot <- function(
   }
 
   if (isTRUE(x = balanced)) {
-    neg.markers <- all.markers[all.markers[, 2] < logfc.threshold & all.markers[, 1] < p.val.cutoff, , drop = FALSE]
+    neg.markers <- all.markers[all.markers[, 2] < -logfc.threshold & all.markers[, 1] < p.val.cutoff, , drop = FALSE]
     neg.markers.list <- rownames(x = neg.markers)[1:min(max.genes, nrow(x = neg.markers))]
+    Sys.sleep(1)
     neg.er <- enrichR::enrichr(genes = neg.markers.list, databases = enrich.database)
     neg.er <- do.call(what = cbind, args = neg.er)
     neg.er$log10pval <- -log10(x = neg.er[, paste(enrich.database, sep = ".", "P.value")])
@@ -366,7 +370,9 @@ MixscapeLDA <- function(
 #' @param nt.label Name of non-targeting cell class.
 #' @param npcs Number of principle components to use.
 #' @param verbose Print progress bar.
-#' @inheritParams FindMarkers
+#' @param logfc.threshold Limit testing to genes which show, on average, at least
+#' X-fold difference (log-scale) between the two groups of cells. Default is 0.25. 
+#' Increasing logfc.threshold speeds up the function, but can miss weaker signals.
 #' @return Returns a list of the first 10 PCs from each projection.
 #'
 #' @export
@@ -586,9 +592,8 @@ RunLDA.Seurat <- function(
   ...
 ) {
   assay <- assay %||% DefaultAssay(object = object)
-  assay.data <- GetAssay(object = object, assay = assay)
   reduction.data <- RunLDA(
-    object = assay.data,
+    object = object[[assay]],
     assay = assay,
     labels = labels,
     features = features,
@@ -628,7 +633,6 @@ RunLDA.Seurat <- function(
 #' Function to identify perturbed and non-perturbed gRNA expressing cells that
 #' accounts for multiple treatments/conditions/chemical perturbations.
 #'
-#' @inheritParams FindMarkers
 #' @importFrom ggplot2 geom_density position_dodge
 #' @param object An object of class Seurat.
 #' @param assay Assay to use for mixscape classification.
@@ -644,6 +648,10 @@ RunLDA.Seurat <- function(
 #' all are assigned NP.
 #' @param de.assay Assay to use when performing differential expression analysis.
 #' Usually RNA.
+#' @param logfc.threshold Limit testing to genes which show, on average,
+#' at least X-fold difference (log-scale) between the two groups of cells.
+#' Default is 0.25 Increasing logfc.threshold speeds up the function, but can miss
+#' weaker signals.
 #' @param iter.num Number of normalmixEM iterations to run if convergence does
 #' not occur.
 #' @param verbose Display messages
@@ -863,6 +871,9 @@ RunMixscape <- function(
 #' @param max.cells.group Number of cells per identity to plot.
 #' @param max.genes Total number of DE genes to plot.
 #' @param balanced Plot an equal number of genes with both groups of cells.
+#' @param logfc.threshold Limit testing to genes which show, on average, at least
+#' X-fold difference (log-scale) between the two groups of cells. Default is 0.25. 
+#' Increasing logfc.threshold speeds up the function, but can miss weaker signals.
 #' @param order.by.prob Order cells on heatmap based on their mixscape knockout
 #' probability from highest to lowest score.
 #' @param group.by (Deprecated) Option to split densities based on mixscape
@@ -1286,9 +1297,9 @@ ProjectVec <- function(v1, v2) {
 # @param ident.2 Non-targetting class or cells
 # @param labels metadata column with target gene classification.
 # @param de.assay Name of Assay DE is performed on.
-# @param test.use 	Denotes which test to use. See all available tests on
+# @param test.use Denotes which test to use. See all available tests on
 # FindMarkers documentation.
-# @param pval.cut.off P-value cut-off for selection of significantly DE genes.
+# @param pval.cutoff P-value cut-off for selection of significantly DE genes.
 # @param logfc.threshold Limit testing to genes which show, on average, at
 # least X-fold difference (log-scale) between the two groups of cells. Default
 # is 0.25 Increasing logfc.threshold speeds up the function, but can miss
@@ -1302,7 +1313,7 @@ TopDEGenesMixscape <- function(
   ident.2 = NULL,
   labels = 'gene',
   de.assay = "RNA",
-  test.use = "LR",
+  test.use = "wilcox",
   pval.cutoff = 5e-2,
   logfc.threshold = 0.25,
   verbose = TRUE
@@ -1321,7 +1332,8 @@ TopDEGenesMixscape <- function(
         assay = de.assay,
         test.use = test.use,
         logfc.threshold = logfc.threshold,
-        verbose = verbose
+        verbose = verbose,
+        min.pct = 0.1
       )
       de.genes <- de.genes[de.genes$p_val_adj < pval.cutoff, ]
     },

@@ -13,8 +13,10 @@ SpatialPlot(
   images = NULL,
   cols = NULL,
   image.alpha = 1,
+  image.scale = "lowres",
   crop = TRUE,
   slot = "data",
+  keep.scale = "feature",
   min.cutoff = NA,
   max.cutoff = NA,
   cells.highlight = NULL,
@@ -29,7 +31,8 @@ SpatialPlot(
   combine = TRUE,
   pt.size.factor = 1.6,
   alpha = c(1, 1),
-  stroke = 0.25,
+  shape = 21,
+  stroke = NA,
   interactive = FALSE,
   do.identify = FALSE,
   identify.ident = NULL,
@@ -55,7 +58,9 @@ SpatialDimPlot(
   pt.size.factor = 1.6,
   alpha = c(1, 1),
   image.alpha = 1,
-  stroke = 0.25,
+  image.scale = "lowres",
+  shape = 21,
+  stroke = NA,
   label.box = TRUE,
   interactive = FALSE,
   information = NULL
@@ -67,6 +72,7 @@ SpatialFeaturePlot(
   images = NULL,
   crop = TRUE,
   slot = "data",
+  keep.scale = "feature",
   min.cutoff = NA,
   max.cutoff = NA,
   ncol = NULL,
@@ -74,7 +80,9 @@ SpatialFeaturePlot(
   pt.size.factor = 1.6,
   alpha = c(1, 1),
   image.alpha = 1,
-  stroke = 0.25,
+  image.scale = "lowres",
+  shape = 21,
+  stroke = NA,
   interactive = FALSE,
   information = NULL
 )
@@ -97,11 +105,28 @@ default, ggplot2 assigns colors}
 \item{image.alpha}{Adjust the opacity of the background images. Set to 0 to
 remove.}
 
+\item{image.scale}{Choose the scale factor ("lowres"/"hires") to apply in 
+order to matchthe plot with the specified `image` - defaults to "lowres"}
+
 \item{crop}{Crop the plot in to focus on points plotted. Set to \code{FALSE} to show
 entire background image.}
 
 \item{slot}{If plotting a feature, which data slot to pull from (counts,
 data, or scale.data)}
+
+\item{keep.scale}{How to handle the color scale across multiple plots. Options are:
+\itemize{
+  \item \dQuote{feature} (default; by row/feature scaling): The plots for
+    each individual feature are scaled to the maximum expression of the
+    feature across the conditions provided to \code{split.by}
+  \item \dQuote{all} (universal scaling): The plots for all features and
+    conditions are scaled to the maximum expression value for the feature
+    with the highest overall expression
+  \item \code{NULL} (no scaling): Each individual plot is scaled to the
+    maximum expression value of the feature in the condition provided to
+    \code{split.by}; be aware setting \code{NULL} will result in color
+    scales that are not comparable between plots
+}}
 
 \item{min.cutoff, max.cutoff}{Vector of minimum and maximum cutoff
 values for each feature, may specify quantile in the form of 'q##' where '##'
@@ -140,6 +165,9 @@ themeing will not work when plotting multiple features/groupings}
 \item{alpha}{Controls opacity of spots. Provide as a vector specifying the
 min and max for SpatialFeaturePlot. For SpatialDimPlot, provide a single
 alpha value for each plot.}
+
+\item{shape}{Control the shape of the spots - same as the ggplot2 parameter. 
+The default is 21, which plots circles - use 22 to plot squares.}
 
 \item{stroke}{Control the width of the border around the spots}
 

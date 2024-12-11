@@ -13,6 +13,7 @@ FeatureScatter(
   shuffle = FALSE,
   seed = 1,
   group.by = NULL,
+  split.by = NULL,
   cols = NULL,
   pt.size = 1,
   shape.by = NULL,
@@ -21,9 +22,11 @@ FeatureScatter(
   combine = TRUE,
   slot = "data",
   plot.cor = TRUE,
+  ncol = NULL,
   raster = NULL,
   raster.dpi = c(512, 512),
-  jitter = FALSE
+  jitter = FALSE,
+  log = FALSE
 )
 }
 \arguments{
@@ -44,6 +47,9 @@ useful for crowded plots if points of interest are being buried. (default is FAL
 \item{group.by}{Name of one or more metadata columns to group (color) cells by
 (for example, orig.ident); pass 'ident' to group by identity class}
 
+\item{split.by}{A factor in object metadata to split the feature plot by, pass 'ident'
+to split by cell identity'}
+
 \item{cols}{Colors to use for identity class plotting.}
 
 \item{pt.size}{Size of the points on the plot}
@@ -60,6 +66,8 @@ useful for crowded plots if points of interest are being buried. (default is FAL
 
 \item{plot.cor}{Display correlation in plot title}
 
+\item{ncol}{Number of columns if plotting multiple plots}
+
 \item{raster}{Convert points to raster format, default is \code{NULL}
 which will automatically use raster if the number of points plotted is greater than
 100,000}
@@ -68,6 +76,8 @@ which will automatically use raster if the number of points plotted is greater t
 Default is c(512, 512).}
 
 \item{jitter}{Jitter for easier visualization of crowded points (default is FALSE)}
+
+\item{log}{Plot features on the log scale (default is FALSE)}
 }
 \value{
 A ggplot object

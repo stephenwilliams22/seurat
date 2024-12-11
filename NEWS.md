@@ -1,7 +1,131 @@
 # Unreleased
+
+## Changes
+- Surfaced more fine-grained control over what parts of a Xenium experiment are loaded in `LoadXenium`
+- Added ability to load Xenium nucleus segmentation masks
+- Updated `LoadXenium` to also read some run metadata (run start time, preservation method, panel used, organism, tissue type, instrument software version and stain kit used) into `misc` slot
+- Updated `ReadXenium` to load cell_feature_matrix.h5 when present in favor of the MEX format files
+- Added ability to read Xenium `segmentation_method` directly into `meta.data`
+- Updated `ReadXenium` to load .parquet files using `arrow` instead of .csv.gz files to support XOA 3.0
+- Updated `RunSLSI` to support `BPCells` matrices
+- Fixed `LoadXenium` to accommodate datasets without "Blank Codeword" or "Unassigned Codeword" matrices
+- Fixed `ReadXenium` to properly parse multiple molecular outputs at once ([#8265](https://github.com/satijalab/seurat/issues/8265))
+- Fixed `RunPCA` to avoid converting `BPCells` matrices into dense matrices - significantly reduces the function's memory usage when running on `BPCells` matrices
+- Added `features` parameter to `LeverageScore` and `SketchData`
+- Updated `SketchData`'s `ncells` parameter to accept integer vector
+
+# Seurat 5.1.0 (2024-05-08)
+
+## Changes
+- Updated interactive `SpatialDimPlot`s to display spatial coordinates
+- Updated `BuildClusterTree` to `PseudobulkExpression(..., method = "aggregate")` instead of `AverageExpression`
+- Fixed `SpatialPlot` to properly handle images with shared cells
+- Added `cluster.name` parameter to `BuildNicheAssay`
+- Added `VisiumV2` class, inherits `SeuratObject::FOV`, returned by `Load10X_Spatial`
+- Updated `Load10X_Spatial` to support loading Visium HD datasets - added `bin.size` parameter 
+- Updated `Read10X_Coordinates` to handle new `tissue_coordinates.parquet` files
+- Added `shape` parameter to `SpatialPlot` and wrappers: `SpatialFeaturePlot` and `SpatialDimPlot`
+- Added `image.scale` parameter to `SpatialPlot` and related functions: `SpatialFeaturePlot`/`ISpatialFeaturePlot` and `SpatialDimPlot`/`ISpatialDimPlot`
+- Restored `image.name` parameter to `Read10X_Image`
+- Added `scale` parameter to `Radius.VisiumV1`
+- Fixed calculation of `spot.radius` attribute for `VisiumV1` instance returned by `Read10X_Image` — replace `scale.factors$fiducial` with `scale.factors$spot`
+- Added `Read10X_Coordinates` and `Read10X_ScaleFactors`
+- Fixed `SpatialPlot` to properly handle mutli-assay `Seurat` instances
+
+# Seurat 5.0.3 (2024-03-18)
+
+## Changes
+- Fixed `PercentAbove` to discount null values ([#8412](https://github.com/satijalab/seurat/issues/8412))
+- Added `log` parameter to `FeatureScatter`
+- Fixed handling of `clip.range` for `SCTransform` when `ncells` is less than the size of the passed dataset
+
+# Seurat 5.0.2 (2024-02-28) 
+
+## Changes
+
+- Fixed `AverageExpression` to handle `features` vector when `layer="scale.data"` and `return.seurat=TRUE`
+- Added `fc.slot` parameter to `FindMarkers`
+- Fixed `SCTransform` to handle `vars.to.regress` ([#8148](https://github.com/satijalab/seurat/issues/8148)) and ([#8349](https://github.com/satijalab/seurat/issues/8349))
+- Fixed `SCTransform` to handle fetching residuals ([#8185](https://github.com/satijalab/seurat/issues/8185))
+
+# Seurat 5.0.1 (2023-11-16)
+
+## Changes
+
+- Fixed `SCTransform.StdAssay` to pass extra arguments to `sctransform::vst()`. Fixes [#875](https://github.com/satijalab/seurat/issues/7998)
+- Fixed PercentageFeatureSet Layer calling [(#8009)](https://github.com/satijalab/seurat/issues/8009)
+- Fixed cell highlighting [(#7914)](https://github.com/satijalab/seurat/pull/7914) 
+- Updated marker sorting to be by p-value with ties broken by absolute difference in percent expression
+- Fixed issue with replicated barcodes in MappingScore [(#7922)](https://github.com/satijalab/seurat/issues/7922)
+- Improved `PseudobulkExpression` by adding 'g' to cell names that started with numeric values
+- Improved `PseudobulkExpression` by adding each variable specified in `group.by` as columns in the object metadata when `return.seurat=TRUE` 
+- Fixed `DimPlot` and `FeatureScatter` which were breaking when using the `split.by` argument with a variable that contained NAs
+
+# Seurat 5.0.0 (2023-10-25)
+
+## Added
+- Add `BridgeCellsRepresentation` to construct a dictionary representation for each unimodal dataset.
+- Add `BuildNicheAssay` to construct a new assay where each feature is a cell label. The values represent the sum of a particular cell label neighboring a given cell.
+- Add `CalcDispersion` to calculate the dispersion of features.
+- Add `CCAIntegration` to perform Seurat-CCA Integration.
+- Add `CountSketch` to generate a CountSketch random matrix.
+- Add `CreateCategoryMatrix` to create a one-hot matrix for a given label.
+- Add `DISP` to find variable features based on dispersion.
+- Add `FastRPCAIntegration` as a convenience wrapper function around the following three functions that are often run together when performing integration.
+- Add `FetchResiduals_reference` as a temporary function to get residuals from the reference.
+- Add `FetchResiduals` to call sctransform::get_residuals.
+- Add `FetchResidualSCTModel` to calculate Pearson residuals of features not in the scale.data.
+- Add `FindBridgeAnchor` to find bridge anchors between two unimodal datasets.
+- Add `FindBridgeIntegrationAnchors` to find a set of anchors for integration between unimodal query and the other unimodal reference using a pre-computed BridgeReferenceSet.
+- Add `FindBridgeTransferAnchors` to find a set of anchors for label transfer between unimodal query and the other unimodal reference using a pre-computed BridgeReferenceSet.
+- Add `GaussianSketch` to perform Gaussian sketching.
+- Add `HarmonyIntegration` to perform Harmony integration.
+- Add `IntegrateLayers` to integrate layers in an assay object.
+- Add `JointPCAIntegration` to perform Seurat-Joint PCA Integration.
+- Add `LeverageScore` to compute the leverage scores for a given object.
+- Add `LoadCurioSeeker` to load Curio Seeker data.
+- Add `MVP` to find variable features based on mean.var.plot.
+- Add `NNtoGraph` to convert the Neighbor class to an asymmetrical Graph class.
+- Add `PrepareBridgeReference` to preprocess the multi-omic bridge and unimodal reference datasets into an extended reference.
+- Add `ProjectCellEmbeddings` to project query data onto the reference dimensional reduction.
+- Add `ProjectData` to project high-dimensional single-cell RNA expression data from a full dataset onto the lower-dimensional embedding of the sketch of the dataset.
+- Add `ProjectDimReduc` to project query data to reference dimensional reduction.
+- Add `ProjectIntegration` to integrate embeddings from the integrated sketched.assay.
+- Add `PseudobulkExpression` to normalize the count data present in a given assay.
+- Add `Read10X_probe_metadata` to read the probe metadata from a 10x Genomics probe barcode matrix file in HDF5 format.
+- Add `RPCAIntegration` to perform Seurat-RPCA Integration.
+- Add `RunGraphLaplacian` to run a graph Laplacian dimensionality reduction.
+- Add `SelectIntegrationFeatures5` to select integration features for v5 assays.
+- Add `SelectSCTIntegrationFeatures` to select SCT integration features.
+- Add `SketchData` to use sketching methods to downsample high-dimensional single-cell RNA expression data for help with scalability for large datasets.
+- Add `TransferSketchLabels` to transfer cell type labels from a sketched dataset to a full dataset based on the similarities in the lower-dimensional space.
+- Add `UnSketchEmbeddings` to transfer embeddings from sketched cells to the full data.
+- Add `VST` to apply a variance stabilizing transformation for selection of variable features.
+
+## Changes
+- Change `FindTransferAnchors` so that anchor filtering is not performed by default
+- Change `merge` so that layers will be added to a single Seurat object instead of combining raw count matrices
+- Deprecate `slot` parameter in favor of `layers` in accessor and set methods
+
+# Seurat 4.4.0 (2023-09-27)
+
+## Added
+- Add parallelization support with speed improvements for `PrepSCTFindMarkers` 
+- Fix bug in `LoadNanostring`([#7566](https://github.com/satijalab/seurat/pull/7566))
+
 ## Changes
 - Fix bug in `as.Seurat.SingleCellExperiment()` ([#6692](https://github.com/satijalab/seurat/issues/6692))
-
+- Support for Visium probe information introduced in Spaceranger 2.1 ([#7141](https://github.com/satijalab/seurat/pull/7141))
+- Add `LoadCurioSeeker` to load sequencing-based spatial datasets generated using the Curio Seeker 
+- Fix fold change calculation for assays ([#7095](https://github.com/satijalab/seurat/issues/7095))
+- Fix `pt.size` bug when rasterization is set to true ([#7379](https://github.com/satijalab/seurat/issues/7379)) 
+- Fix `FoldChange` and `FindMarkers` to support all normalization approaches ([#7115](https://github.com/satijalab/seurat/pull/7115),[#7110](https://github.com/satijalab/seurat/issues/7110),[#7095](https://github.com/satijalab/seurat/issues/7095),[#6976](https://github.com/satijalab/seurat/issues/6976),[#6654](https://github.com/satijalab/seurat/issues/6654),[#6701](https://github.com/satijalab/seurat/issues/6701),[#6773](https://github.com/satijalab/seurat/issues/6773), [#7107](https://github.com/satijalab/seurat/issues/7107))
+- Fix for handling newer ParseBio formats in `ReadParseBio` ([#7565](https://github.com/satijalab/seurat/pull/7565))
+- Fix for handling rasterization by default ([#7842](https://github.com/satijalab/seurat/pull/7842))
+- Fix bug in `ReadMtx()` to add back missing parameters 
+- Fix `SCTransform()` for V5 assays to retain gene attributes ([#7557](https://github.com/satijalab/seurat/issues/7557))
+- Fix `LeverageScore()` for objects with few features ([#7650](https://github.com/satijalab/seurat/issues/7650)
+  
 # Seurat 4.3.0 (2022-11-18)
 
 ## Added

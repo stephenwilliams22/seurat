@@ -46,10 +46,10 @@ FindAllMarkers <- function(
   object,
   assay = NULL,
   features = NULL,
-  logfc.threshold = 0.25,
+  logfc.threshold = 0.1,
   test.use = 'wilcox',
   slot = 'data',
-  min.pct = 0.1,
+  min.pct = 0.01,
   min.diff.pct = -Inf,
   node = NULL,
   verbose = TRUE,
@@ -164,7 +164,7 @@ FindAllMarkers <- function(
           subset = (myAUC > return.thresh | myAUC < (1 - return.thresh))
         )
       } else if (is.null(x = node) || test.use %in% c('bimod', 't')) {
-        gde <- gde[order(gde$p_val, -gde[, 2]), ]
+        gde <- gde[order(gde$p_val, -abs(gde$pct.1-gde$pct.2)), ]
         gde <- subset(x = gde, subset = p_val < return.thresh)
       }
       if (nrow(x = gde) > 0) {
@@ -409,19 +409,25 @@ FindConservedMarkers <- function(
 # Methods for Seurat-defined generics
 #%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
+#' @param slot Slot to pull data from; note that if \code{test.use} is
+#' "negbinom", "poisson", or "DESeq2", \code{slot} will be set to "counts"
 #' @param cells.1 Vector of cell names belonging to group 1
 #' @param cells.2 Vector of cell names belonging to group 2
-#' @param counts Count matrix if using scale.data for DE tests. This is used for
-#' computing pct.1 and pct.2 and for filtering features based on fraction
-#' expressing
 #' @param features Genes to test. Default is to use all genes
+#' @param slot Slot to pull data from; note that if \code{test.use} is
+#' "negbinom", "poisson", or "DESeq2", \code{slot} will be set to "counts"
 #' @param logfc.threshold Limit testing to genes which show, on average, at least
-#' X-fold difference (log-scale) between the two groups of cells. Default is 0.25
+#' X-fold difference (log-scale) between the two groups of cells. Default is 0.1
 #' Increasing logfc.threshold speeds up the function, but can miss weaker signals.
+#' If the \code{slot} parameter is "scale.data" no filtering is performed.
 #' @param test.use Denotes which test to use. Available options are:
 #' \itemize{
 #'  \item{"wilcox"} : Identifies differentially expressed genes between two
-#'  groups of cells using a Wilcoxon Rank Sum test (default)
+#'  groups of cells using a Wilcoxon Rank Sum test (default); will use a fast
+#'  implementation by Presto if installed
+#'  \item{"wilcox_limma"} : Identifies differentially expressed genes between two
+#'  groups of cells using the limma implementation of the Wilcoxon Rank Sum test;
+#'  set this option to reproduce results from Seurat v4
 #'  \item{"bimod"} : Likelihood-ratio test for single cell gene expression,
 #'  (McDavid et al., Bioinformatics, 2013)
 #'  \item{"roc"} : Identifies 'markers' of gene expression using ROC analysis.
@@ -460,11 +466,11 @@ FindConservedMarkers <- function(
 #' }
 #' @param min.pct  only test genes that are detected in a minimum fraction of
 #' min.pct cells in either of the two populations. Meant to speed up the function
-#' by not testing genes that are very infrequently expressed. Default is 0.1
+#' by not testing genes that are very infrequently expressed. Default is 0.01
 #' @param min.diff.pct  only test genes that show a minimum difference in the
 #' fraction of detection between the two groups. Set to -Inf by default
-#' @param only.pos Only return positive markers (FALSE by default)
 #' @param verbose Print a progress bar once expression testing begins
+#' @param only.pos Only return positive markers (FALSE by default)
 #' @param max.cells.per.ident Down sample each identity class to a max number.
 #' Default is no downsampling. Not activated by default (set to Inf)
 #' @param random.seed Random seed for downsampling
@@ -473,10 +479,9 @@ FindConservedMarkers <- function(
 #' @param min.cells.feature Minimum number of cells expressing the feature in at least one
 #' of the two groups, currently only used for poisson and negative binomial tests
 #' @param min.cells.group Minimum number of cells in one of the groups
-#' @param pseudocount.use Pseudocount to add to averaged expression values when
-#' calculating logFC. 1 by default.
 #' @param fc.results data.frame from FoldChange
-#' @param densify Convert the sparse matrix to a dense form before running the DE test. This can provide speedups but might require higher memory; default is FALSE
+#' @param densify Convert the sparse matrix to a dense form before running the 
+#' DE test. This can provide speedups but might require higher memory; default is FALSE
 #'
 #'
 #' @importFrom Matrix rowMeans
@@ -490,13 +495,12 @@ FindConservedMarkers <- function(
 FindMarkers.default <- function(
   object,
   slot = "data",
-  counts = numeric(),
   cells.1 = NULL,
   cells.2 = NULL,
   features = NULL,
-  logfc.threshold = 0.25,
-  test.use = 'wilcox',
-  min.pct = 0.1,
+  logfc.threshold = 0.1,
+  test.use = "wilcox",
+  min.pct = 0.01,
   min.diff.pct = -Inf,
   verbose = TRUE,
   only.pos = FALSE,
@@ -505,12 +509,10 @@ FindMarkers.default <- function(
   latent.vars = NULL,
   min.cells.feature = 3,
   min.cells.group = 3,
-  pseudocount.use = 1,
   fc.results = NULL,
   densify = FALSE,
   ...
 ) {
-  pseudocount.use <- pseudocount.use %||% 1
   ValidateCellGroups(
     object = object,
     cells.1 = cells.1,
@@ -524,11 +526,6 @@ FindMarkers.default <- function(
     min.diff.pct <- -Inf
     logfc.threshold <- 0
   }
-  data <- switch(
-    EXPR = slot,
-    'scale.data' = counts,
-    object
-  )
   # feature selection (based on percentages)
   alpha.min <- pmax(fc.results$pct.1, fc.results$pct.2)
   names(x = alpha.min) <- rownames(x = fc.results)
@@ -545,6 +542,7 @@ FindMarkers.default <- function(
     warning("No features pass min.diff.pct threshold; returning empty data.frame")
     return(fc.results[features, ])
   }
+
   # feature selection (based on logFC)
   if (slot != "scale.data") {
     total.diff <- fc.results[, 1] #first column is logFC
@@ -560,6 +558,7 @@ FindMarkers.default <- function(
       return(fc.results[features, ])
     }
   }
+
   # subsample cell groups if they are too large
   if (max.cells.per.ident < Inf) {
     set.seed(seed = random.seed)
@@ -573,18 +572,35 @@ FindMarkers.default <- function(
       latent.vars <- latent.vars[c(cells.1, cells.2), , drop = FALSE]
     }
   }
-  de.results <- PerformDE(
-    object = object,
-    cells.1 = cells.1,
-    cells.2 = cells.2,
-    features = features,
-    test.use = test.use,
-    verbose = verbose,
-    min.cells.feature = min.cells.feature,
-    latent.vars = latent.vars,
-    densify = densify,
-    ...
-  )
+  if (inherits(x = object, what = "IterableMatrix")){
+    if(test.use != "wilcox"){
+      stop("Differential expression with BPCells currently only supports the 'wilcox' method.",
+           " Please rerun with test.use = 'wilcox'")
+    }
+    data.use <- object[features, c(cells.1, cells.2), drop = FALSE]
+    groups <- c(rep("foreground", length(cells.1)), rep("background", length(cells.2)))
+    de.results <- suppressMessages(
+      BPCells::marker_features(data.use, group = groups, method = "wilcoxon")
+    )
+    de.results <- subset(de.results, de.results$foreground == "foreground")
+    de.results <- data.frame(feature = de.results$feature,
+                             p_val = de.results$p_val_raw)
+    rownames(de.results) <- de.results$feature
+    de.results$feature <- NULL
+  } else {
+    de.results <- PerformDE(
+      object = object,
+      cells.1 = cells.1,
+      cells.2 = cells.2,
+      features = features,
+      test.use = test.use,
+      verbose = verbose,
+      min.cells.feature = min.cells.feature,
+      latent.vars = latent.vars,
+      densify = densify,
+      ...
+    )
+  }
   de.results <- cbind(de.results, fc.results[rownames(x = de.results), , drop = FALSE])
   if (only.pos) {
     de.results <- de.results[de.results[, 2] > 0, , drop = FALSE]
@@ -592,7 +608,7 @@ FindMarkers.default <- function(
   if (test.use %in% DEmethods_nocorrect()) {
     de.results <- de.results[order(-de.results$power, -de.results[, 1]), ]
   } else {
-    de.results <- de.results[order(de.results$p_val, -de.results[, 1]), ]
+    de.results <- de.results[order(de.results$p_val, -abs(de.results$pct.1-de.results$pct.2)), ]
     de.results$p_val_adj = p.adjust(
       p = de.results$p_val,
       method = "bonferroni",
@@ -602,8 +618,27 @@ FindMarkers.default <- function(
   return(de.results)
 }
 
+
+#' @param fc.slot Slot used to calculate fold-change - will also affect the 
+#' default for \code{mean.fxn}, see below for more details. 
+#' @param pseudocount.use Pseudocount to add to averaged expression values when
+#' calculating logFC. 1 by default.
 #' @param norm.method Normalization method for fold change calculation when
 #' \code{slot} is \dQuote{\code{data}}
+#' @param mean.fxn Function to use for fold change or average difference calculation.
+#' The default depends on the the value of \code{fc.slot}:
+#' \itemize{
+#'  \item{"counts"} : difference in the log of the mean counts, with pseudocount.
+#'  \item{"data"} : difference in the log of the average exponentiated data, with pseudocount.
+#'  This adjusts for differences in sequencing depth between cells, and assumes that "data"
+#'  has been log-normalized.
+#'  \item{"scale.data"} : difference in the means of scale.data.
+#' }
+#' @param fc.name Name of the fold change, average difference, or custom function column
+#' in the output data.frame. If NULL, the fold change column will be named
+#' according to the logarithm base (eg, "avg_log2FC"), or if using the scale.data
+#' slot "avg_diff".
+#' @param base The base with respect to which logarithms are computed.
 #'
 #' @rdname FindMarkers
 #' @concept differential_expression
@@ -616,40 +651,27 @@ FindMarkers.Assay <- function(
   cells.1 = NULL,
   cells.2 = NULL,
   features = NULL,
-  logfc.threshold = 0.25,
-  test.use = 'wilcox',
-  min.pct = 0.1,
-  min.diff.pct = -Inf,
-  verbose = TRUE,
-  only.pos = FALSE,
-  max.cells.per.ident = Inf,
-  random.seed = 1,
-  latent.vars = NULL,
-  min.cells.feature = 3,
-  min.cells.group = 3,
+  test.use = "wilcox",
+  fc.slot = "data",
   pseudocount.use = 1,
+  norm.method = NULL,
   mean.fxn = NULL,
   fc.name = NULL,
   base = 2,
-  densify = FALSE,
-  norm.method = NULL,
   ...
 ) {
-  pseudocount.use <- pseudocount.use %||% 1
   data.slot <- ifelse(
     test = test.use %in% DEmethods_counts(),
-    yes = 'counts',
+    yes = "counts",
     no = slot
   )
+  if (length(x = Layers(object = object, search = slot)) > 1) {
+    stop(slot, " layers are not joined. Please run JoinLayers")
+  }
   data.use <-  GetAssayData(object = object, slot = data.slot)
-  counts <- switch(
-    EXPR = data.slot,
-    'scale.data' = GetAssayData(object = object, slot = "counts"),
-    numeric()
-  )
   fc.results <- FoldChange(
     object = object,
-    slot = data.slot,
+    slot = fc.slot,
     cells.1 = cells.1,
     cells.2 = cells.2,
     features = features,
@@ -661,31 +683,23 @@ FindMarkers.Assay <- function(
   )
   de.results <- FindMarkers(
     object = data.use,
-    slot = data.slot,
-    counts = counts,
     cells.1 = cells.1,
     cells.2 = cells.2,
     features = features,
-    logfc.threshold = logfc.threshold,
     test.use = test.use,
-    min.pct = min.pct,
-    min.diff.pct = min.diff.pct,
-    verbose = verbose,
-    only.pos = only.pos,
-    max.cells.per.ident = max.cells.per.ident,
-    random.seed = random.seed,
-    latent.vars = latent.vars,
-    min.cells.feature = min.cells.feature,
-    min.cells.group = min.cells.group,
-    pseudocount.use = pseudocount.use,
     fc.results = fc.results,
-    densify = densify,
     ...
   )
   return(de.results)
 }
 
-#' @param recorrect_umi Recalculate corrected UMI counts using minimum of the median UMIs when performing DE using multiple SCT objects; default is TRUE
+#' @method FindMarkers StdAssay
+#' @export
+#'
+FindMarkers.StdAssay <- FindMarkers.Assay
+
+#' @param recorrect_umi Recalculate corrected UMI counts using minimum of the 
+#' median UMIs when performing DE using multiple SCT objects; default is TRUE
 #'
 #' @rdname FindMarkers
 #' @concept differential_expression
@@ -694,35 +708,31 @@ FindMarkers.Assay <- function(
 #'
 FindMarkers.SCTAssay <- function(
   object,
-  slot = "data",
   cells.1 = NULL,
   cells.2 = NULL,
   features = NULL,
-  logfc.threshold = 0.25,
-  test.use = 'wilcox',
-  min.pct = 0.1,
-  min.diff.pct = -Inf,
-  verbose = TRUE,
-  only.pos = FALSE,
-  max.cells.per.ident = Inf,
-  random.seed = 1,
-  latent.vars = NULL,
-  min.cells.feature = 3,
-  min.cells.group = 3,
+  test.use = "wilcox",
   pseudocount.use = 1,
+  slot = "data",
+  fc.slot = "data",
   mean.fxn = NULL,
   fc.name = NULL,
   base = 2,
-  densify = FALSE,
   recorrect_umi = TRUE,
   ...
 ) {
-  pseudocount.use <- pseudocount.use %||% 1
   data.slot <- ifelse(
     test = test.use %in% DEmethods_counts(),
-    yes = 'counts',
+    yes = "counts",
     no = slot
   )
+  if (test.use %in% DEmethods_counts()){
+    # set slot to counts
+    if (slot !="counts") {
+      message(paste0("Setting slot to counts for ", test.use, " (counts based test: "))
+      slot <- "counts"
+    }
+  }
   if (recorrect_umi && length(x = levels(x = object)) > 1) {
     cell_attributes <- SCTResults(object = object, slot = "cell.attributes")
     observed_median_umis <- lapply(
@@ -747,20 +757,21 @@ FindMarkers.SCTAssay <- function(
   }
 
   data.use <-  GetAssayData(object = object, slot = data.slot)
-  counts <- switch(
-    EXPR = data.slot,
-    'scale.data' = GetAssayData(object = object, slot = "counts"),
-    numeric()
-  )
-  if (is.null(x = mean.fxn)){
-    mean.fxn <- function(x) {
-      return(log(x = rowMeans(x = expm1(x = x)) + pseudocount.use, base = base))
-
-    }
+  # Default assumes the input is log1p(corrected counts)
+  default.mean.fxn <- function(x) {
+    return(log(x = (rowSums(x = expm1(x = x)) + pseudocount.use)/NCOL(x), base = base))
   }
+  mean.fxn <- mean.fxn %||% switch(
+    EXPR = fc.slot,
+    "counts" = function(x) {
+      return(log(x = (rowSums(x = x) + pseudocount.use)/NCOL(x), base = base))
+    },
+    "scale.data" = rowMeans,
+    default.mean.fxn
+  )
   fc.results <- FoldChange(
     object = object,
-    slot = data.slot,
+    slot = fc.slot,
     cells.1 = cells.1,
     cells.2 = cells.2,
     features = features,
@@ -768,28 +779,14 @@ FindMarkers.SCTAssay <- function(
     mean.fxn = mean.fxn,
     fc.name = fc.name,
     base = base
-    )
+  )
   de.results <- FindMarkers(
     object = data.use,
-    slot = data.slot,
-    counts = counts,
     cells.1 = cells.1,
     cells.2 = cells.2,
     features = features,
-    logfc.threshold = logfc.threshold,
     test.use = test.use,
-    min.pct = min.pct,
-    min.diff.pct = min.diff.pct,
-    verbose = verbose,
-    only.pos = only.pos,
-    max.cells.per.ident = max.cells.per.ident,
-    random.seed = random.seed,
-    latent.vars = latent.vars,
-    min.cells.feature = min.cells.feature,
-    min.cells.group = min.cells.group,
-    pseudocount.use = pseudocount.use,
     fc.results = fc.results,
-    densify = densify,
     ...
   )
   return(de.results)
@@ -805,11 +802,11 @@ FindMarkers.SCTAssay <- function(
 FindMarkers.DimReduc <- function(
   object,
   cells.1 = NULL,
-  cells.2 = NULL,
+  cells.2 = NULL, 
   features = NULL,
-  logfc.threshold = 0.25,
+  logfc.threshold = 0.1,
   test.use = "wilcox",
-  min.pct = 0.1,
+  min.pct = 0.01,
   min.diff.pct = -Inf,
   verbose = TRUE,
   only.pos = FALSE,
@@ -818,14 +815,12 @@ FindMarkers.DimReduc <- function(
   latent.vars = NULL,
   min.cells.feature = 3,
   min.cells.group = 3,
-  pseudocount.use = 1,
+  densify = FALSE,
   mean.fxn = rowMeans,
   fc.name = NULL,
-  densify = FALSE,
   ...
 
 ) {
-  pseudocount.use <- pseudocount.use %||% 1
   if (test.use %in% DEmethods_counts()) {
     stop("The following tests cannot be used for differential expression on a reduction as they assume a count model: ",
          paste(DEmethods_counts(), collapse=", "))
@@ -888,7 +883,7 @@ FindMarkers.DimReduc <- function(
     de.results$p_val_adj = p.adjust(
       p = de.results$p_val,
       method = "bonferroni",
-      n = nrow(x = object)
+      n = ncol(x = object)
     )
   }
   return(de.results)
@@ -900,19 +895,13 @@ FindMarkers.DimReduc <- function(
 #' @param ident.2 A second identity class for comparison; if \code{NULL},
 #' use all other cells for comparison; if an object of class \code{phylo} or
 #' 'clustertree' is passed to \code{ident.1}, must pass a node to find markers for
-#' @param reduction Reduction to use in differential expression testing - will test for DE on cell embeddings
-#' @param group.by Regroup cells into a different identity class prior to performing differential expression (see example)
-#' @param subset.ident Subset a particular identity class prior to regrouping. Only relevant if group.by is set (see example)
+#' @param group.by Regroup cells into a different identity class prior to 
+#' performing differential expression (see example)
+#' @param subset.ident Subset a particular identity class prior to regrouping. 
+#' Only relevant if group.by is set (see example)
 #' @param assay Assay to use in differential expression testing
-#' @param slot Slot to pull data from; note that if \code{test.use} is "negbinom", "poisson", or "DESeq2",
-#' \code{slot} will be set to "counts"
-#' @param mean.fxn Function to use for fold change or average difference calculation.
-#' If NULL, the appropriate function will be chose according to the slot used
-#' @param fc.name Name of the fold change, average difference, or custom function column
-#' in the output data.frame. If NULL, the fold change column will be named
-#' according to the logarithm base (eg, "avg_log2FC"), or if using the scale.data
-#' slot "avg_diff".
-#' @param base The base with respect to which logarithms are computed.
+#' @param reduction Reduction to use in differential expression testing - will 
+#' test for DE on cell embeddings
 #'
 #' @rdname FindMarkers
 #' @concept differential_expression
@@ -923,27 +912,11 @@ FindMarkers.Seurat <- function(
   object,
   ident.1 = NULL,
   ident.2 = NULL,
+  latent.vars = NULL,
   group.by = NULL,
   subset.ident = NULL,
   assay = NULL,
-  slot = 'data',
   reduction = NULL,
-  features = NULL,
-  logfc.threshold = 0.25,
-  test.use = "wilcox",
-  min.pct = 0.1,
-  min.diff.pct = -Inf,
-  verbose = TRUE,
-  only.pos = FALSE,
-  max.cells.per.ident = Inf,
-  random.seed = 1,
-  latent.vars = NULL,
-  min.cells.feature = 3,
-  min.cells.group = 3,
-  mean.fxn = NULL,
-  fc.name = NULL,
-  base = 2,
-  densify = FALSE,
   ...
 ) {
   if (!is.null(x = group.by)) {
@@ -958,6 +931,7 @@ FindMarkers.Seurat <- function(
   if (length(x = ident.1) == 0) {
     stop("At least 1 ident must be specified in `ident.1`")
   }
+
   # select which data to use
   if (is.null(x = reduction)) {
     assay <- assay %||% DefaultAssay(object = object)
@@ -967,12 +941,26 @@ FindMarkers.Seurat <- function(
     data.use <- object[[reduction]]
     cellnames.use <- rownames(x = data.use)
   }
+
   cells <- IdentsToCells(
     object = object,
     ident.1 = ident.1,
     ident.2 = ident.2,
     cellnames.use = cellnames.use
   )
+  cells <- sapply(
+    X = cells,
+    FUN = intersect,
+    y = cellnames.use,
+    simplify = FALSE,
+    USE.NAMES = TRUE
+  )
+  if (!all(vapply(X = cells, FUN = length, FUN.VALUE = integer(length = 1L)))) {
+    abort(
+      message = "Cells in one or both identity groups are not present in the data requested"
+    )
+  }
+
   # fetch latent.vars
   if (!is.null(x = latent.vars)) {
     latent.vars <- FetchData(
@@ -981,6 +969,7 @@ FindMarkers.Seurat <- function(
       cells = c(cells$cells.1, cells$cells.2)
     )
   }
+
   # check normalization method
   norm.command <- paste0("NormalizeData.", assay)
   norm.method <- if (norm.command %in% Command(object = object) && is.null(x = reduction)) {
@@ -998,31 +987,17 @@ FindMarkers.Seurat <- function(
       )
     } else {
     NULL
-    }
+  }
+
   de.results <- FindMarkers(
     object = data.use,
-    slot = slot,
+    latent.vars = latent.vars,
     cells.1 = cells$cells.1,
     cells.2 = cells$cells.2,
-    features = features,
-    logfc.threshold = logfc.threshold,
-    test.use = test.use,
-    min.pct = min.pct,
-    min.diff.pct = min.diff.pct,
-    verbose = verbose,
-    only.pos = only.pos,
-    max.cells.per.ident = max.cells.per.ident,
-    random.seed = random.seed,
-    latent.vars = latent.vars,
-    min.cells.feature = min.cells.feature,
-    min.cells.group = min.cells.group,
-    mean.fxn = mean.fxn,
-    base = base,
-    fc.name = fc.name,
-    densify = densify,
     norm.method = norm.method,
     ...
   )
+
   return(de.results)
 }
 
@@ -1070,6 +1045,7 @@ FoldChange.default <- function(
 #' when \code{slot} is \dQuote{\code{data}}
 #'
 #' @importFrom Matrix rowMeans
+#' @importFrom Matrix rowSums
 #' @rdname FoldChange
 #' @concept differential_expression
 #' @export
@@ -1087,21 +1063,98 @@ FoldChange.Assay <- function(
   norm.method = NULL,
   ...
 ) {
+  data <- GetAssayData(object = object, slot = slot)
+  # By default run as if LogNormalize is done
+  log1pdata.mean.fxn <- function(x) {
+    # return(log(x = rowMeans(x = expm1(x = x)) + pseudocount.use, base = base))
+    return(log(x = (rowSums(x = expm1(x = x)) + pseudocount.use)/NCOL(x), base = base))
+  }
+  scaledata.mean.fxn <- rowMeans
+  counts.mean.fxn <- function(x) {
+    # return(log(x = rowMeans(x = x) + pseudocount.use, base = base))
+    return(log(x = (rowSums(x = x) + pseudocount.use)/NCOL(x), base = base))
+  }
+  if (!is.null(x = norm.method)) {
+    # For anything apart from log normalization set to rowMeans
+    if (norm.method!="LogNormalize") {
+      new.mean.fxn <- counts.mean.fxn
+    } else {
+      new.mean.fxn <- counts.mean.fxn
+      if (slot == "data") {
+        new.mean.fxn <- log1pdata.mean.fxn
+      }  else if (slot == "scale.data") {
+        new.mean.fxn <- scaledata.mean.fxn
+      }
+    }
+  } else {
+    # If no normalization method is passed use slots to decide mean function
+    new.mean.fxn <- switch(
+      EXPR = slot,
+      'data' = log1pdata.mean.fxn,
+      'scale.data' = scaledata.mean.fxn,
+      'counts' = counts.mean.fxn,
+      log1pdata.mean.fxn
+    )
+  }
+  mean.fxn <- mean.fxn %||% new.mean.fxn
+  # Omit the decimal value of e from the column name if base == exp(1)
+  base.text <- ifelse(
+    test = base == exp(1),
+    yes = "",
+    no = base
+  )
+  fc.name <- fc.name %||% ifelse(
+    test = slot == "scale.data",
+    yes = "avg_diff",
+    no = paste0("avg_log", base.text, "FC")
+  )
+  FoldChange(
+    object = data,
+    cells.1 = cells.1,
+    cells.2 = cells.2,
+    features = features,
+    mean.fxn = mean.fxn,
+    fc.name = fc.name
+  )
+}
+
+#' @method FoldChange StdAssay
+#' @export
+#'
+FoldChange.StdAssay <- FoldChange.Assay
+
+#' @importFrom Matrix rowMeans
+#' @importFrom Matrix rowSums
+#' @rdname FoldChange
+#' @concept differential_expression
+#' @export
+#' @method FoldChange SCTAssay
+FoldChange.SCTAssay <- function(
+    object,
+    cells.1,
+    cells.2,
+    features = NULL,
+    slot = "data",
+    pseudocount.use = 1,
+    fc.name = NULL,
+    mean.fxn = NULL,
+    base = 2,
+    ...
+) {
   pseudocount.use <- pseudocount.use %||% 1
   data <- GetAssayData(object = object, slot = slot)
   default.mean.fxn <- function(x) {
-    return(log(x = rowMeans(x = x) + pseudocount.use, base = base))
+    # return(log(x = rowMeans(x = expm1(x = x)) + pseudocount.use, base = base))
+    return(log(x = (rowSums(x = expm1(x = x)) + pseudocount.use)/NCOL(x), base = base))
   }
   mean.fxn <- mean.fxn %||% switch(
     EXPR = slot,
-    'data' = switch(
-      EXPR = norm.method %||% '',
-      'LogNormalize' = function(x) {
-        return(log(x = rowMeans(x = expm1(x = x)) + pseudocount.use, base = base))
-      },
-      default.mean.fxn
-    ),
+    'data' = default.mean.fxn,
     'scale.data' = rowMeans,
+    'counts' = function(x) {
+      # return(log(x = rowMeans(x = x) + pseudocount.use, base = base))
+      return(log(x = (rowSums(x = x) + pseudocount.use)/NCOL(x), base = base))
+    },
     default.mean.fxn
   )
   # Omit the decimal value of e from the column name if base == exp(1)
@@ -1125,6 +1178,7 @@ FoldChange.Assay <- function(
   )
 }
 
+
 #' @importFrom Matrix rowMeans
 #' @rdname FoldChange
 #' @concept differential_expression
@@ -1141,7 +1195,6 @@ FoldChange.DimReduc <- function(
   mean.fxn = NULL,
   ...
 ) {
-  pseudocount.use <- pseudocount.use %||% 1
   mean.fxn <- mean.fxn %||% rowMeans
   fc.name <- fc.name %||% "avg_diff"
   data <- t(x = Embeddings(object = object))
@@ -1189,7 +1242,7 @@ FoldChange.Seurat <- function(
   slot = 'data',
   reduction = NULL,
   features = NULL,
-  pseudocount.use = NULL,
+  pseudocount.use = 1,
   mean.fxn = NULL,
   base = 2,
   fc.name = NULL,
@@ -1219,6 +1272,24 @@ FoldChange.Seurat <- function(
     ident.2 = ident.2,
     cellnames.use = cellnames.use
   )
+  # check normalization method
+  norm.command <- paste0("NormalizeData.", assay)
+  norm.method <- if (norm.command %in% Command(object = object) && is.null(x = reduction)) {
+    Command(
+      object = object,
+      command = norm.command,
+      value = "normalization.method"
+    )
+  } else if (length(x = intersect(x = c("FindIntegrationAnchors", "FindTransferAnchors"), y = Command(object = object)))) {
+    command <- intersect(x = c("FindIntegrationAnchors", "FindTransferAnchors"), y = Command(object = object))[1]
+    Command(
+      object = object,
+      command = command,
+      value = "normalization.method"
+    )
+  } else {
+    NULL
+  }
   fc.results <- FoldChange(
     object = data.use,
     cells.1 = cells$cells.1,
@@ -1228,7 +1299,8 @@ FoldChange.Seurat <- function(
     pseudocount.use = pseudocount.use,
     mean.fxn = mean.fxn,
     base = base,
-    fc.name = fc.name
+    fc.name = fc.name,
+    norm.method = norm.method
   )
   return(fc.results)
 }
@@ -1305,7 +1377,7 @@ DEmethods_latent <- function() {
 
 # returns tests that require CheckDots
 DEmethods_checkdots <- function() {
-  c('wilcox', 'MAST', 'DESeq2')
+  c('wilcox', 'wilcox_limma', 'MAST', 'DESeq2')
 }
 
 # returns tests that do not use Bonferroni correction on the DE results
@@ -1944,6 +2016,14 @@ PerformDE <- function(
       verbose = verbose,
       ...
     ),
+    'wilcox_limma' = WilcoxDETest(
+      data.use = data.use,
+      cells.1 = cells.1,
+      cells.2 = cells.2,
+      verbose = verbose,
+      limma = TRUE,
+      ...
+    ),
     'bimod' = DiffExpTest(
       data.use = data.use,
       cells.1 = cells.1,
@@ -2019,16 +2099,23 @@ PerformDE <- function(
 #' @param assay Assay name where for SCT objects are stored; Default is 'SCT'
 #' @param verbose Print messages and progress
 #' @importFrom Matrix Matrix
+#' @importFrom SeuratObject SparseEmptyMatrix
+#' @importFrom pbapply pblapply
+#' @importFrom future.apply future_lapply
+#' @importFrom future nbrOfWorkers
 #' @importFrom sctransform correct_counts
+#' @importFrom SeuratObject JoinLayers
 #'
 #' @return Returns a Seurat object with recorrected counts and data in the SCT assay.
 #' @export
 #'
 #' @concept differential_expression
+#' @template section-progressr
+#' @template section-future
 #' @examples
 #' data("pbmc_small")
-#' pbmc_small1 <- SCTransform(object = pbmc_small, variable.features.n = 20)
-#' pbmc_small2 <- SCTransform(object = pbmc_small, variable.features.n = 20)
+#' pbmc_small1 <- SCTransform(object = pbmc_small, variable.features.n = 20, vst.flavor="v1")
+#' pbmc_small2 <- SCTransform(object = pbmc_small, variable.features.n = 20, vst.flavor="v1")
 #' pbmc_merged <- merge(x = pbmc_small1, y = pbmc_small2)
 #' pbmc_merged <- PrepSCTFindMarkers(object = pbmc_merged)
 #' markers <- FindMarkers(
@@ -2047,6 +2134,11 @@ PerformDE <- function(
 #' )
 #'
 PrepSCTFindMarkers <- function(object, assay = "SCT", verbose = TRUE) {
+  if (verbose && nbrOfWorkers() == 1) {
+    my.lapply <- pblapply
+  } else {
+    my.lapply <- future_lapply
+  }
   if (length(x = levels(x = object[[assay]])) == 1) {
     if (verbose) {
       message("Only one SCT model is stored - skipping recalculating corrected counts")
@@ -2071,8 +2163,8 @@ PrepSCTFindMarkers <- function(object, assay = "SCT", verbose = TRUE) {
 
   }
   model_median_umis <- SCTResults(object = object[[assay]], slot = "median_umi")
-  min_median_umi <- min(unlist(x = observed_median_umis))
-  if (all(unlist(x = model_median_umis) == min_median_umi)){
+  min_median_umi <- min(unlist(x = observed_median_umis), na.rm = TRUE)
+  if (all(unlist(x = model_median_umis) > min_median_umi)){
     if (verbose){
       message("Minimum UMI unchanged. Skipping re-correction.")
     }
@@ -2095,6 +2187,12 @@ PrepSCTFindMarkers <- function(object, assay = "SCT", verbose = TRUE) {
          paste(umi.assay, collapse = ", ")
     )
   }
+  umi.layers <- Layers(object = object, assay = umi.assay, search = 'counts')
+  if (length(x = umi.layers) > 1) {
+    object[[umi.assay]] <- JoinLayers(
+      object = object[[umi.assay]],
+      layers = "counts", new = "counts")
+  }
   raw_umi <- GetAssayData(object = object, assay = umi.assay, slot = "counts")
   corrected_counts <- Matrix(
     nrow = nrow(x = raw_umi),
@@ -2113,27 +2211,43 @@ PrepSCTFindMarkers <- function(object, assay = "SCT", verbose = TRUE) {
   set_median_umi <- rep(min_median_umi, length(levels(x = object[[assay]])))
   names(set_median_umi) <- levels(x = object[[assay]])
   set_median_umi <- as.list(set_median_umi)
+  all_genes <- rownames(x = object[[assay]])
   # correct counts
-  for (model_name in levels(x = object[[assay]])) {
+  my.correct_counts <- function(model_name){
     model_genes <- rownames(x = model_pars_fit[[model_name]])
-    x <- list(
-      model_str = model_str[[model_name]],
-      arguments = arguments[[model_name]],
-      model_pars_fit = as.matrix(x = model_pars_fit[[model_name]]),
-      cell_attr = cell_attr[[model_name]]
-    )
-    cells <- rownames(x = cell_attr[[model_name]])
-    umi <- raw_umi[model_genes, cells]
+      x <- list(
+        model_str = model_str[[model_name]],
+        arguments = arguments[[model_name]],
+        model_pars_fit = as.matrix(x = model_pars_fit[[model_name]]),
+        cell_attr = cell_attr[[model_name]]
+      )
+      cells <- rownames(x = cell_attr[[model_name]])
+      umi <- raw_umi[all_genes, cells]
 
-    umi_corrected <- correct_counts(
-      x = x,
-      umi = umi,
-      verbosity = 0,
-      scale_factor = min_median_umi
-    )
-    corrected_counts[rownames(umi_corrected), colnames(umi_corrected)] <- umi_corrected
+      umi_corrected <- correct_counts(
+        x = x,
+        umi = umi,
+        verbosity = 0,
+        scale_factor = min_median_umi
+      )
+      missing_features <- setdiff(x = all_genes, y = rownames(x = umi_corrected))
+      corrected_counts.list <- NULL
+      gc(verbose = FALSE)
+      empty <- SparseEmptyMatrix(nrow = length(x = missing_features), ncol = ncol(x = umi_corrected))
+      rownames(x = empty) <- missing_features
+      colnames(x = umi_corrected) <- colnames(x = umi_corrected)
+
+      umi_corrected <- rbind(umi_corrected, empty)[all_genes,]
+
+      return(umi_corrected)
   }
-  corrected_data <- log1p(corrected_counts)
+  corrected_counts.list <- my.lapply(X = levels(x = object[[assay]]),
+                                     FUN = my.correct_counts)
+  names(x = corrected_counts.list) <- levels(x = object[[assay]])
+
+  corrected_counts <- do.call(what = MergeSparseMatrices, args = corrected_counts.list)
+  corrected_counts <- as.sparse(x = corrected_counts)
+  corrected_data <- log1p(x = corrected_counts)
   suppressWarnings({object <- SetAssayData(object = object,
                                            assay = assay,
                                            slot = "counts",
@@ -2143,8 +2257,20 @@ PrepSCTFindMarkers <- function(object, assay = "SCT", verbose = TRUE) {
                                            slot = "data",
                                            new.data = corrected_data)})
   SCTResults(object = object[[assay]], slot = "median_umi") <- set_median_umi
-
   return(object)
+}
+
+PrepSCTFindMarkers.V5 <- function(object, assay = "SCT", umi.assay = "RNA", layer = "counts", verbose = TRUE) {
+  layers <- Layers(object = object[[umi.assay]], search = layer)
+  dataset.names <- gsub(pattern = paste0(layer, "."), replacement = "", x = layers)
+  for (i in seq_along(along.with = layers)) {
+    l <- layers[i]
+    counts <- LayerData(
+      object = object[[umi.assay]],
+      layer = l
+      )
+  }
+  cells.grid <- DelayedArray::colAutoGrid(x = counts, ncol = min(length(Cells(object)), ncol(counts)))
 }
 
 # given a UMI count matrix, estimate NB theta parameter for each gene
@@ -2251,14 +2377,18 @@ ValidateCellGroups <- function(
 # Differential expression using Wilcoxon Rank Sum
 #
 # Identifies differentially expressed genes between two groups of cells using
-# a Wilcoxon Rank Sum test. Makes use of limma::rankSumTestWithCorrelation for a
+# a Wilcoxon Rank Sum test. Makes use of presto::wilcoxauc for a more efficient
+# implementation of the wilcoxon test. If presto is not installed, or if limma
+# is requested, makes use of limma::rankSumTestWithCorrelation for a
 # more efficient implementation of the wilcoxon test. Thanks to Yunshun Chen and
-# Gordon Smyth for suggesting the limma implementation.
+# Gordon Smyth for suggesting the limma implementation. If limma is also not installed,
+# uses wilcox.test.
 #
 # @param data.use Data matrix to test
 # @param cells.1 Group 1 cells
 # @param cells.2 Group 2 cells
 # @param verbose Print a progress bar
+# @param limma If limma should be used for testing; default is FALSE
 # @param ... Extra parameters passed to wilcox.test
 #
 # @return Returns a p-value ranked matrix of putative differentially expressed
@@ -2282,6 +2412,7 @@ WilcoxDETest <- function(
   cells.1,
   cells.2,
   verbose = TRUE,
+  limma = FALSE,
   ...
 ) {
   data.use <- data.use[, c(cells.1, cells.2), drop = FALSE]
@@ -2296,40 +2427,59 @@ WilcoxDETest <- function(
     yes = FALSE,
     no = TRUE
   )
+  presto.check <- PackageCheck("presto", error = FALSE)
   limma.check <- PackageCheck("limma", error = FALSE)
-  if (limma.check[1] && overflow.check) {
-    p_val <- my.sapply(
-      X = 1:nrow(x = data.use),
-      FUN = function(x) {
-        return(min(2 * min(limma::rankSumTestWithCorrelation(index = j, statistics = data.use[x, ])), 1))
-      }
-    )
+  group.info <- data.frame(row.names = c(cells.1, cells.2))
+  group.info[cells.1, "group"] <- "Group1"
+  group.info[cells.2, "group"] <- "Group2"
+  group.info[, "group"] <- factor(x = group.info[, "group"])
+  if (presto.check[1] && (!limma)) {
+    data.use <- data.use[, rownames(group.info), drop = FALSE]
+    res <- presto::wilcoxauc(X = data.use, y = group.info[, "group"])
+    res <- res[1:(nrow(x = res)/2),]
+    p_val <- res$pval
   } else {
-    if (getOption('Seurat.limma.wilcox.msg', TRUE) && overflow.check) {
+    if (getOption('Seurat.presto.wilcox.msg', TRUE) && (!limma)) {
       message(
-        "For a more efficient implementation of the Wilcoxon Rank Sum Test,",
-        "\n(default method for FindMarkers) please install the limma package",
+        "For a (much!) faster implementation of the Wilcoxon Rank Sum Test,",
+        "\n(default method for FindMarkers) please install the presto package",
         "\n--------------------------------------------",
-        "\ninstall.packages('BiocManager')",
-        "\nBiocManager::install('limma')",
+        "\ninstall.packages('devtools')",
+        "\ndevtools::install_github('immunogenomics/presto')",
         "\n--------------------------------------------",
-        "\nAfter installation of limma, Seurat will automatically use the more ",
+        "\nAfter installation of presto, Seurat will automatically use the more ",
         "\nefficient implementation (no further action necessary).",
         "\nThis message will be shown once per session"
       )
-      options(Seurat.limma.wilcox.msg = FALSE)
+      options(Seurat.presto.wilcox.msg = FALSE)
     }
-    group.info <- data.frame(row.names = c(cells.1, cells.2))
-    group.info[cells.1, "group"] <- "Group1"
-    group.info[cells.2, "group"] <- "Group2"
-    group.info[, "group"] <- factor(x = group.info[, "group"])
-    data.use <- data.use[, rownames(x = group.info), drop = FALSE]
-    p_val <- my.sapply(
-      X = 1:nrow(x = data.use),
-      FUN = function(x) {
-        return(wilcox.test(data.use[x, ] ~ group.info[, "group"], ...)$p.value)
+    if (limma.check[1] && overflow.check) {
+      p_val <- my.sapply(
+        X = 1:nrow(x = data.use),
+        FUN = function(x) {
+          return(min(2 * min(limma::rankSumTestWithCorrelation(index = j, statistics = data.use[x, ])), 1))
+        }
+      )
+    } else {
+      if (limma && overflow.check) {
+        stop(
+          "To use the limma implementation of the Wilcoxon Rank Sum Test,
+        please install the limma package:
+        --------------------------------------------
+        install.packages('BiocManager')
+        BiocManager::install('limma')
+        --------------------------------------------"
+        )
+      } else {
+        data.use <- data.use[, rownames(x = group.info), drop = FALSE]
+        p_val <- my.sapply(
+          X = 1:nrow(x = data.use),
+          FUN = function(x) {
+            return(wilcox.test(data.use[x, ] ~ group.info[, "group"], ...)$p.value)
+          }
+        )
       }
-    )
+    }
   }
   return(data.frame(p_val, row.names = rownames(x = data.use)))
 }
